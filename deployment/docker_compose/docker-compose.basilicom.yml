@@ -60,7 +60,18 @@ services:
       - WEB_DOMAIN=${WEB_DOMAIN:-}
 
   nginx:
+    # Custom-Image mit eingebackenen Templates (Build direkt aus dem Repo).
+    # Damit KEIN Host-Bind-Mount mehr nötig — der bleibt in Portainer-Git-Deploys
+    # leer (Portainer-Storage != Docker-Host-Root) und ließ nginx crashen.
+    # Build-Context liest Portainer aus seinem Clone (geht), Bind-Mount nicht.
+    image: onyx-nginx-basilicom:${IMAGE_TAG:-latest}
+    build:
+      context: ../data/nginx
+      dockerfile: Dockerfile
+    pull_policy: build
     ports: !override []
+    # Host-Bind raus — Templates kommen jetzt aus dem Image (/nginx-templates)
+    volumes: !override []
     environment:
       - DOMAIN=${ONYX_DOMAIN:-onyx.example.com}
     networks:
