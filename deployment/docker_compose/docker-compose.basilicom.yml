@@ -120,16 +120,23 @@ services:
       - traefik.http.routers.onyx-mcp.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`)
       - traefik.http.routers.onyx-mcp.middlewares=onyx-mcp-https-redirect
       - traefik.http.middlewares.onyx-mcp-https-redirect.redirectscheme.scheme=https
-      # --- HTTPS + TLS + VPN-Allowlist + Bearer-Token-Gate ---
+      # --- Eigene Allowlist für MCP: VPN + Anthropic-Egress ---
+      # claude.ai verbindet sich als Remote-MCP-Client von Anthropics Egress-IPs
+      # (160.79.104.0/21), NICHT aus eurem VPN. Daher hier zusätzlich erlauben.
+      # Die UI bleibt über onyx-vpn (nur VPN) — Anthropic braucht die UI nicht.
+      # Hinweis: 160.79.104.0/21 ist Anthropics geteilter Egress (alle claude.ai-
+      # Kunden) -> die IP-Allowlist allein schützt NICHT; der Bearer-Token unten
+      # ist die eigentliche Auth für den Anthropic-Pfad.
+      - traefik.http.middlewares.onyx-mcp-allow.ipwhitelist.sourcerange=${VPN_SOURCE_RANGE},${ANTHROPIC_SOURCE_RANGE:-160.79.104.0/21}
+      # --- HTTPS + TLS + (VPN|Anthropic)-Allowlist + Bearer-Token-Gate ---
       # Der Router matcht NUR, wenn der exakte Bearer-Header gesendet wird ->
       # echte Token-Protection auf Traefik-Ebene (die App selbst prüft mit
-      # AUTH_TYPE=disabled nicht). Ohne/falscher Token -> 404. Zusätzlich die
-      # VPN-Allowlist. Claude sendet Authorization: Bearer ${MCP_BEARER_TOKEN}.
+      # AUTH_TYPE=disabled nicht). Ohne/falscher Token -> 404.
       - traefik.http.routers.onyx-mcp-secure.entrypoints=https
       - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`) && Headers(`Authorization`, `Bearer ${MCP_BEARER_TOKEN}`)
       - traefik.http.routers.onyx-mcp-secure.tls=true
       - traefik.http.routers.onyx-mcp-secure.tls.certresolver=http
-      - traefik.http.routers.onyx-mcp-secure.middlewares=onyx-vpn
+      - traefik.http.routers.onyx-mcp-secure.middlewares=onyx-mcp-allow
       - traefik.http.services.onyx-mcp.loadbalancer.server.port=8090
 
 networks:

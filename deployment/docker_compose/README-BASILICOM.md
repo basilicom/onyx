@@ -28,6 +28,7 @@ Basilicom-spezifischen Deploy-Dateien — die Upstream-Compose bleibt unverände
    ONYX_MCP_DOMAIN=onyx-mcp.example.com
    WEB_DOMAIN=https://onyx.example.com
    VPN_SOURCE_RANGE=<VPN-EXIT-IP>/32
+   ANTHROPIC_SOURCE_RANGE=160.79.104.0/21
    MCP_BEARER_TOKEN=<secret>
    AUTH_TYPE=disabled
    POSTGRES_PASSWORD=<secret>
@@ -89,11 +90,15 @@ Die Hosting-Umgebung ist **öffentlich** erreichbar. Onyx hält Jira/Confluence-
 läuft aber mit `AUTH_TYPE=disabled` (kein App-Login) — damit das nicht offen im
 Netz liegt, schützen **zwei Traefik-Ebenen**:
 
-1. **VPN-Allowlist** (`onyx-vpn`, Middleware `ipwhitelist` für Traefik v2, `VPN_SOURCE_RANGE`) auf UI- und
-   MCP-Router. Nur der VPN-Gateway (Full-Tunnel-Exit-IP) darf rein.
-2. **Bearer-Gate** am MCP-Router: Der Router matcht nur bei exaktem Header
-   `Authorization: Bearer <MCP_BEARER_TOKEN>` — sonst 404. Echte Token-Protection,
-   obwohl die App mit `AUTH_TYPE=disabled` selbst nicht prüft.
+1. **IP-Allowlist** (Middleware `ipwhitelist`, Traefik v2):
+   - **UI-Router** (`onyx-vpn`): nur `VPN_SOURCE_RANGE` (VPN-Gateway). Mensch-only.
+   - **MCP-Router** (`onyx-mcp-allow`): `VPN_SOURCE_RANGE` **+** `ANTHROPIC_SOURCE_RANGE`
+     (`160.79.104.0/21`), weil claude.ai sich als Remote-MCP-Client von Anthropics
+     Egress aus verbindet.
+2. **Bearer-Gate** am MCP-Router: Router matcht nur bei exaktem Header
+   `Authorization: Bearer <MCP_BEARER_TOKEN>` — sonst 404. **Das** ist die eigentliche
+   Auth für den Anthropic-Pfad (Anthropics Egress teilen sich alle claude.ai-Kunden,
+   die IP-Allowlist allein reicht dort nicht). Token stark halten.
 
 > **Folge von `AUTH_TYPE=disabled`:** Jeder im VPN hat Vollzugriff auf die UI
 > (inkl. Admin/Connectors). Für ein kleines Team hinter VPN ok. Willst du echtes
