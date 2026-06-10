@@ -16,12 +16,12 @@
 #   - nginx + mcp_server ans externe Traefik-Netz hängen
 #   - Traefik-Routen für UI (ONYX_DOMAIN) und MCP (ONYX_MCP_DOMAIN)
 #   - eingebauten MCP-Server aktivieren (onyx.mcp_server_main, Port 8090)
-#   - VPN-only: IPAllowList beschränkt Zugriff auf den VPN-Gateway
+#   - VPN-only: IP-Whitelist (Middleware ipwhitelist) beschränkt Zugriff
 #
 # SICHERHEIT — wichtig:
 #   Die Hosting-Umgebung ist öffentlich erreichbar. Damit Onyx (Jira/Confluence-
 #   Daten!) NICHT öffentlich offen liegt, läuft hier AUTH_TYPE=disabled NUR in
-#   Kombination mit der IPAllowList (VPN_SOURCE_RANGE). Nur der VPN-Gateway
+#   Kombination mit der IP-Whitelist (VPN_SOURCE_RANGE). Nur der VPN-Gateway
 #   (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im VPN
 #   `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
 #
@@ -35,8 +35,9 @@
 # Host-Voraussetzung (OpenSearch): vm.max_map_count >= 262144
 #   sudo sysctl -w vm.max_map_count=262144   (persistent in /etc/sysctl.conf)
 #
-# Traefik-Version: Labels nutzen `ipallowlist` (Traefik v3). Bei Traefik v2
-#   heißt die Middleware `ipwhitelist` — dann unten umbenennen.
+# Traefik-Version: Diese Labels sind für Traefik v2 (pde: traefik:v2.11):
+#   Middleware `ipwhitelist`, Router-Matcher `Headers(...)`. Bei Traefik v3
+#   stattdessen `ipallowlist` und `Header(...)` (Singular) verwenden.
 # =============================================================================
 
 services:
@@ -68,8 +69,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-traefik-proxy}
-      # --- VPN-only IPAllowList (hier definiert, von UI- + MCP-Router genutzt) ---
-      - traefik.http.middlewares.onyx-vpn.ipallowlist.sourcerange=${VPN_SOURCE_RANGE:?VPN_SOURCE_RANGE muss gesetzt sein (VPN-Exit-CIDR)}
+      # --- VPN-only IPWhitelist (Traefik v2; hier definiert, von UI- + MCP-Router genutzt) ---
+      - traefik.http.middlewares.onyx-vpn.ipwhitelist.sourcerange=${VPN_SOURCE_RANGE:?VPN_SOURCE_RANGE muss gesetzt sein (VPN-Exit-CIDR)}
       # --- HTTP -> HTTPS ---
       - traefik.http.routers.onyx.entrypoints=http
       - traefik.http.routers.onyx.rule=Host(`${ONYX_DOMAIN:-onyx.example.com}`)
@@ -125,7 +126,7 @@ services:
       # AUTH_TYPE=disabled nicht). Ohne/falscher Token -> 404. Zusätzlich die
       # VPN-Allowlist. Claude sendet Authorization: Bearer ${MCP_BEARER_TOKEN}.
       - traefik.http.routers.onyx-mcp-secure.entrypoints=https
-      - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`) && Header(`Authorization`, `Bearer ${MCP_BEARER_TOKEN}`)
+      - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`) && Headers(`Authorization`, `Bearer ${MCP_BEARER_TOKEN}`)
       - traefik.http.routers.onyx-mcp-secure.tls=true
       - traefik.http.routers.onyx-mcp-secure.tls.certresolver=http
       - traefik.http.routers.onyx-mcp-secure.middlewares=onyx-vpn

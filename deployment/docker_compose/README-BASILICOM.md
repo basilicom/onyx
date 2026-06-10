@@ -89,7 +89,7 @@ Die Hosting-Umgebung ist **öffentlich** erreichbar. Onyx hält Jira/Confluence-
 läuft aber mit `AUTH_TYPE=disabled` (kein App-Login) — damit das nicht offen im
 Netz liegt, schützen **zwei Traefik-Ebenen**:
 
-1. **VPN-Allowlist** (`onyx-vpn` IPAllowList, `VPN_SOURCE_RANGE`) auf UI- und
+1. **VPN-Allowlist** (`onyx-vpn`, Middleware `ipwhitelist` für Traefik v2, `VPN_SOURCE_RANGE`) auf UI- und
    MCP-Router. Nur der VPN-Gateway (Full-Tunnel-Exit-IP) darf rein.
 2. **Bearer-Gate** am MCP-Router: Der Router matcht nur bei exaktem Header
    `Authorization: Bearer <MCP_BEARER_TOKEN>` — sonst 404. Echte Token-Protection,
