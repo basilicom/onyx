@@ -1,0 +1,119 @@
+# =============================================================================
+# Basilicom-Override für Onyx v4 (Portainer + Traefik)
+# =============================================================================
+# Wird ZUSÄTZLICH zur docker-compose.yml geladen. Die Basis-Compose bleibt
+# unverändert (saubere Upstream-Merges).
+#
+# CLI:
+#   docker compose -f docker-compose.yml -f docker-compose.basilicom.yml -p onyx up -d
+#
+# Portainer (Repository-Deploy):
+#   Compose path:     deployment/docker_compose/docker-compose.yml
+#   Additional path:  deployment/docker_compose/docker-compose.basilicom.yml
+#
+# Was dieser Override macht:
+#   - nginx-Host-Ports entfernen (Ingress über Traefik)
+#   - nginx + mcp_server ans externe Traefik-Netz hängen
+#   - Traefik-Routen für UI (ONYX_DOMAIN) und MCP (ONYX_MCP_DOMAIN)
+#   - eingebauten MCP-Server aktivieren (onyx.mcp_server_main, Port 8090)
+#   - VPN-only: IPAllowList beschränkt Zugriff auf den VPN-Gateway
+#
+# SICHERHEIT — wichtig:
+#   Die Hosting-Umgebung ist öffentlich erreichbar. Damit Onyx (Jira/Confluence-
+#   Daten!) NICHT öffentlich offen liegt, läuft hier AUTH_TYPE=disabled NUR in
+#   Kombination mit der IPAllowList (VPN_SOURCE_RANGE). Nur der VPN-Gateway
+#   (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im VPN
+#   `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
+#
+# Voraussetzungen (Env in Portainer, siehe env.basilicom.template):
+#   TRAEFIK_NETWORK   externes Traefik-Netz (hier: traefik-proxy)
+#   ONYX_DOMAIN       z.B. onyx.example.com
+#   ONYX_MCP_DOMAIN   z.B. onyx-mcp.example.com
+#   VPN_SOURCE_RANGE  erlaubte Quelle(n) als CIDR, z.B. <VPN-EXIT-IP>/32
+#   AUTH_TYPE=disabled + IMAGE_TAG + Secrets
+#
+# Host-Voraussetzung (OpenSearch): vm.max_map_count >= 262144
+#   sudo sysctl -w vm.max_map_count=262144   (persistent in /etc/sysctl.conf)
+#
+# Traefik-Version: Labels nutzen `ipallowlist` (Traefik v3). Bei Traefik v2
+#   heißt die Middleware `ipwhitelist` — dann unten umbenennen.
+# =============================================================================
+
+services:
+  nginx:
+    ports: !override []
+    environment:
+      - DOMAIN=${ONYX_DOMAIN:-onyx.example.com}
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik-proxy}
+      # --- VPN-only IPAllowList (hier definiert, von UI- + MCP-Router genutzt) ---
+      - traefik.http.middlewares.onyx-vpn.ipallowlist.sourcerange=${VPN_SOURCE_RANGE:?VPN_SOURCE_RANGE muss gesetzt sein (VPN-Exit-CIDR)}
+      # --- HTTP -> HTTPS ---
+      - traefik.http.routers.onyx.entrypoints=http
+      - traefik.http.routers.onyx.rule=Host(`${ONYX_DOMAIN:-onyx.example.com}`)
+      - traefik.http.routers.onyx.middlewares=onyx-https-redirect
+      - traefik.http.middlewares.onyx-https-redirect.redirectscheme.scheme=https
+      # --- HTTPS + TLS + VPN-Allowlist ---
+      - traefik.http.routers.onyx-secure.entrypoints=https
+      - traefik.http.routers.onyx-secure.rule=Host(`${ONYX_DOMAIN:-onyx.example.com}`)
+      - traefik.http.routers.onyx-secure.tls=true
+      - traefik.http.routers.onyx-secure.tls.certresolver=http
+      - traefik.http.routers.onyx-secure.middlewares=onyx-vpn
+      - traefik.http.services.onyx.loadbalancer.server.port=80
+
+  # Eingebauter Onyx-MCP-Server (in der Basis-Compose auskommentiert -> hier aktiv).
+  # Streamable-HTTP-MCP auf Port 8090, Endpoint "/". Auth: Bearer-Token, das via
+  # api_server /me validiert wird. Mit AUTH_TYPE=disabled akzeptiert /me jeden
+  # Bearer -> Claude verbindet sich mit beliebigem Token (Schutz = VPN-Allowlist).
+  mcp_server:
+    image: ${ONYX_BACKEND_IMAGE:-onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}}
+    restart: unless-stopped
+    command: >
+      /bin/sh -c "exec python -m onyx.mcp_server_main"
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      - relational_db
+      - cache
+      - api_server
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST:-relational_db}
+      - REDIS_HOST=${REDIS_HOST:-cache}
+      - MCP_SERVER_ENABLED=true
+      - MCP_SERVER_PORT=8090
+      - API_SERVER_PROTOCOL=http
+      - API_SERVER_HOST=api_server
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik-proxy}
+      # --- HTTP -> HTTPS ---
+      - traefik.http.routers.onyx-mcp.entrypoints=http
+      - traefik.http.routers.onyx-mcp.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`)
+      - traefik.http.routers.onyx-mcp.middlewares=onyx-mcp-https-redirect
+      - traefik.http.middlewares.onyx-mcp-https-redirect.redirectscheme.scheme=https
+      # --- HTTPS + TLS + VPN-Allowlist + Bearer-Token-Gate ---
+      # Der Router matcht NUR, wenn der exakte Bearer-Header gesendet wird ->
+      # echte Token-Protection auf Traefik-Ebene (die App selbst prüft mit
+      # AUTH_TYPE=disabled nicht). Ohne/falscher Token -> 404. Zusätzlich die
+      # VPN-Allowlist. Claude sendet Authorization: Bearer ${MCP_BEARER_TOKEN}.
+      - traefik.http.routers.onyx-mcp-secure.entrypoints=https
+      - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`) && Header(`Authorization`, `Bearer ${MCP_BEARER_TOKEN}`)
+      - traefik.http.routers.onyx-mcp-secure.tls=true
+      - traefik.http.routers.onyx-mcp-secure.tls.certresolver=http
+      - traefik.http.routers.onyx-mcp-secure.middlewares=onyx-vpn
+      - traefik.http.services.onyx-mcp.loadbalancer.server.port=8090
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik-proxy}

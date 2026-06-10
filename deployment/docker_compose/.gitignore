@@ -1,0 +1,4 @@
+# echte Secrets nie committen (Portainer schreibt stack.env / lokale .env)
+.env
+stack.env
+env.basilicom
