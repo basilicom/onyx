@@ -40,6 +40,24 @@
 # =============================================================================
 
 services:
+  # Diese Vars liest Onyx nur via env_file .env — die existiert beim
+  # Repository-Deploy aber NICHT (Portainer schreibt UI-Vars nur als
+  # ${VAR}-Substitution, nicht als stack.env). Daher hier explizit mappen,
+  # damit die Portainer-Env-Werte wirklich in den Containern landen.
+  api_server:
+    environment:
+      - WEB_DOMAIN=${WEB_DOMAIN:-}
+      - USER_AUTH_SECRET=${USER_AUTH_SECRET:-}
+      - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
+  background:
+    environment:
+      - WEB_DOMAIN=${WEB_DOMAIN:-}
+      - USER_AUTH_SECRET=${USER_AUTH_SECRET:-}
+      - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
+  web_server:
+    environment:
+      - WEB_DOMAIN=${WEB_DOMAIN:-}
+
   nginx:
     ports: !override []
     environment:
