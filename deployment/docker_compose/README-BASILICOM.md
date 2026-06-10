@@ -16,7 +16,7 @@ Basilicom-spezifischen Deploy-Dateien — die Upstream-Compose bleibt unverände
 
 1. **Stacks → Add stack → Repository**
 2. **Repository URL:** `https://github.com/basilicom/onyx`
-3. **Repository reference:** `refs/tags/v4.0.7-bas` (Branch: `basilicom`)
+3. **Repository reference:** `refs/heads/basilicom` (Branch — auto-update bei Push)
 4. **Compose path:** `deployment/docker_compose/docker-compose.yml`
 5. **Additional paths → Add file:** `deployment/docker_compose/docker-compose.basilicom.yml`
 6. **Environment variables → Advanced mode** — einfügen (echte Secrets!):
