@@ -47,11 +47,13 @@ services:
   # damit die Portainer-Env-Werte wirklich in den Containern landen.
   api_server:
     environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - WEB_DOMAIN=${WEB_DOMAIN:-}
       - USER_AUTH_SECRET=${USER_AUTH_SECRET:-}
       - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
   background:
     environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - WEB_DOMAIN=${WEB_DOMAIN:-}
       - USER_AUTH_SECRET=${USER_AUTH_SECRET:-}
       - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
@@ -113,6 +115,7 @@ services:
       - api_server
     environment:
       - POSTGRES_HOST=${POSTGRES_HOST:-relational_db}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - REDIS_HOST=${REDIS_HOST:-cache}
       - MCP_SERVER_ENABLED=true
       - MCP_SERVER_PORT=8090
