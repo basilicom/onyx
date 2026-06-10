@@ -65,7 +65,7 @@ services:
       - DOMAIN=${ONYX_DOMAIN:-onyx.example.com}
     networks:
       - default
-      - traefik
+      - traefik-proxy
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-traefik-proxy}
@@ -111,7 +111,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - default
-      - traefik
+      - traefik-proxy
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-traefik-proxy}
@@ -140,6 +140,8 @@ services:
       - traefik.http.services.onyx-mcp.loadbalancer.server.port=8090
 
 networks:
-  traefik:
+  # Externes Traefik-Netz direkt beim echten Namen referenzieren (kein Alias-
+  # Umweg) — so wie der funktionierende n8n-Stack. Vermeidet Attach-Probleme
+  # beim Multi-File-Deploy auf diesem Host.
+  traefik-proxy:
     external: true
-    name: ${TRAEFIK_NETWORK:-traefik-proxy}
