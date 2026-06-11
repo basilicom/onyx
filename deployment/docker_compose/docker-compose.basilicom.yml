@@ -50,6 +50,9 @@ services:
       - WEB_DOMAIN=${WEB_DOMAIN:-}
       - USER_AUTH_SECRET=${USER_AUTH_SECRET:-}
       - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
+      # Begrenzt die Selbst-Registrierung auf diese Domain(s) (Komma-Liste).
+      # Greift nur, wenn die Var den Container erreicht -> hier explizit mappen.
+      - VALID_EMAIL_DOMAINS=${VALID_EMAIL_DOMAINS:-}
   background:
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
