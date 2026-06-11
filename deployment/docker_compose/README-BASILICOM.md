@@ -29,12 +29,13 @@ Basilicom-spezifischen Deploy-Dateien — die Upstream-Compose bleibt unverände
    WEB_DOMAIN=https://onyx.example.com
    VPN_SOURCE_RANGE=<VPN-EXIT-IP>/32
    ANTHROPIC_SOURCE_RANGE=160.79.104.0/21
-   MCP_BEARER_TOKEN=<secret>
-   AUTH_TYPE=disabled
+   AUTH_TYPE=basic
    POSTGRES_PASSWORD=<secret>
    USER_AUTH_SECRET=<secret>
    ENCRYPTION_KEY_SECRET=<secret>
    ```
+   (Die MCP-Auth läuft über einen Onyx-PAT/API-Key, den der MCP-Server selbst
+   prüft — siehe „Claude per MCP anbinden".)
 
 7. **Deploy**.
 
@@ -59,9 +60,9 @@ Der Stack braucht **~8–10 GB** (background bis 10 GB Limit, opensearch 2 GB He
 `-f docker-compose.resources.yml` mergen.
 
 ### certresolver
-Die Labels nutzen `certresolver=http` — denselben Let's-Encrypt-Resolver-Namen
-wie der `bahlsen-demo`-Stack. Falls euer Traefik einen anders benannten Resolver
-hat, in `docker-compose.basilicom.yml` anpassen.
+Die Labels nutzen `certresolver=http` — den Let's-Encrypt-Resolver-Namen dieses
+Traefik. Falls euer Traefik einen anders benannten Resolver hat, in
+`docker-compose.basilicom.yml` anpassen.
 
 ## Verifizieren nach Deploy
 
@@ -86,29 +87,26 @@ oder nginx hängt nicht im Traefik-Netz, oder der Cert-Resolver-Name stimmt nich
 
 ## Sicherheitsmodell
 
-Die Hosting-Umgebung ist **öffentlich** erreichbar. Onyx hält Jira/Confluence-Daten,
-läuft aber mit `AUTH_TYPE=disabled` (kein App-Login) — damit das nicht offen im
-Netz liegt, schützen **zwei Traefik-Ebenen**:
+Die Hosting-Umgebung ist **öffentlich** erreichbar. Onyx hält Jira/Confluence-Daten.
+Schutz auf zwei Ebenen — Netzwerk (Traefik) **und** App (Onyx-Auth):
 
 1. **IP-Allowlist** (Middleware `ipwhitelist`, Traefik v2):
    - **UI-Router** (`onyx-vpn`): nur `VPN_SOURCE_RANGE` (VPN-Gateway). Mensch-only.
    - **MCP-Router** (`onyx-mcp-allow`): `VPN_SOURCE_RANGE` **+** `ANTHROPIC_SOURCE_RANGE`
      (`160.79.104.0/21`), weil claude.ai sich als Remote-MCP-Client von Anthropics
      Egress aus verbindet.
-2. **Bearer-Gate** am MCP-Router: Router matcht nur bei exaktem Header
-   `Authorization: Bearer <MCP_BEARER_TOKEN>` — sonst 404. **Das** ist die eigentliche
-   Auth für den Anthropic-Pfad (Anthropics Egress teilen sich alle claude.ai-Kunden,
-   die IP-Allowlist allein reicht dort nicht). Token stark halten.
-
-> **Folge von `AUTH_TYPE=disabled`:** Jeder im VPN hat Vollzugriff auf die UI
-> (inkl. Admin/Connectors). Für ein kleines Team hinter VPN ok. Willst du echtes
-> Onyx-Login + per-user-Rechte, brauchst du den Business-Plan (API-Keys) — dann
-> `AUTH_TYPE=basic` und der eingebaute MCP-Server mit echten Tokens.
+2. **App-Auth** (Onyx selbst):
+   - **UI**: `AUTH_TYPE=basic` — echtes Login, erster Signup = Admin. Registrierung
+     per Workspace-„invite-only" + `VALID_EMAIL_DOMAINS` einschränken.
+   - **MCP**: der MCP-Server validiert jeden Bearer gegen `/me`. Gültig nur mit
+     echtem Onyx-PAT (`onyx_pat_...`) oder API-Key (`on_...`). **Das** ist die
+     eigentliche Auth für den Anthropic-Pfad (dessen Egress alle claude.ai-Kunden
+     teilen, die IP-Allowlist allein reicht dort nicht).
 
 **Verifizieren nach Deploy:**
-- im VPN (`curl https://ifconfig.me` == eure VPN-Exit-IP): die Onyx-URL lädt ✓
+- im VPN (`curl https://ifconfig.me` == eure VPN-Exit-IP): die Onyx-URL lädt (Login) ✓
 - ohne VPN: die Onyx-URL → **403** ✓
-- MCP ohne/falschem Bearer → **404**, mit korrektem Bearer → MCP-Antwort ✓
+- MCP mit gültigem PAT → MCP-Antwort; ohne/ungültiger Token → **401** von der App ✓
 
 ## Claude per MCP anbinden
 
@@ -116,19 +114,18 @@ Der eingebaute Onyx-MCP-Server ist in `docker-compose.basilicom.yml` **aktiviert
 (`onyx.mcp_server_main`, Port 8090, Streamable-HTTP, Endpoint `/`) und über
 `ONYX_MCP_DOMAIN` (z.B. `onyx-mcp.example.com`) geroutet.
 
-Claude-Client-Konfiguration (HTTP-MCP):
+Token erzeugen: als Admin im Onyx-UI unter **API Keys** einen API-Key (`on_...`)
+oder einen Personal Access Token (`onyx_pat_...`) anlegen. Diesen als Bearer in
+die Claude-MCP-Config eintragen:
 ```json
 {
   "mcpServers": {
     "onyx": {
       "url": "https://onyx-mcp.example.com/",
-      "headers": { "Authorization": "Bearer <MCP_BEARER_TOKEN>" }
+      "headers": { "Authorization": "Bearer <onyx_pat_... | on_...>" }
     }
   }
 }
 ```
-Der Bearer ist derselbe wie `MCP_BEARER_TOKEN` in der Env — Traefik erzwingt ihn.
-
-**Alternative (ohne eingebauten MCP):** stdio-Bridge pro Client gegen
-`https://<onyx-domain>/api` mit Session-Login (`/search/send-search-message`).
-Sinnvoll, falls ihr `AUTH_TYPE=basic` + echtes Login fahrt.
+Der Token lebt nur in Onyx (widerrufbar) und in dieser Config. Rotation: neuen
+Token in Onyx erzeugen, Config aktualisieren, alten widerrufen.

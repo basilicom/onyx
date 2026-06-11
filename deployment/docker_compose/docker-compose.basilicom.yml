@@ -20,9 +20,9 @@
 #
 # SICHERHEIT — wichtig:
 #   Die Hosting-Umgebung ist öffentlich erreichbar. Schutz der UI: AUTH_TYPE=basic
-#   (v4 hat 'disabled' ENTFERNT) + IP-Whitelist (VPN_SOURCE_RANGE) davor. Nur der
-#   VPN-Gateway (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im
-#   VPN `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
+#   (Onyx-Login) + IP-Whitelist (VPN_SOURCE_RANGE) davor. Nur der VPN-Gateway
+#   (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im VPN
+#   `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
 #
 # Voraussetzungen (Env in Portainer, siehe env.basilicom.template):
 #   TRAEFIK_NETWORK   externes Traefik-Netz (hier: traefik-proxy)
@@ -61,27 +61,22 @@ services:
       - WEB_DOMAIN=${WEB_DOMAIN:-}
 
   # MinIO (S3-File-Store) steht in der Basis-Compose hinter dem Profil
-  # "s3-filestore" und startet bei einem reinen Repository-Deploy daher NICHT
-  # (Portainer aktiviert keine Compose-Profile / reicht COMPOSE_PROFILES nicht
-  # durch). Folge: api_server/background können http://minio:9000 nicht
-  # erreichen -> EndpointConnectionError beim Startup ("Application startup
-  # failed"). Profil hier leeren -> minio startet immer mit. Image/Env/Volume/
-  # Healthcheck aus der Basis bleiben unverändert.
+  # "s3-filestore"; Portainer aktiviert keine Compose-Profile. Profil hier leeren,
+  # damit minio immer mitstartet — api_server/background brauchen http://minio:9000.
   minio:
     profiles: !override []
 
   nginx:
-    # Custom-Image mit eingebackenen Templates (Build direkt aus dem Repo).
-    # Damit KEIN Host-Bind-Mount mehr nötig — der bleibt in Portainer-Git-Deploys
-    # leer (Portainer-Storage != Docker-Host-Root) und ließ nginx crashen.
-    # Build-Context liest Portainer aus seinem Clone (geht), Bind-Mount nicht.
+    # Custom-Image mit eingebackenen Config-Templates (Build aus dem Repo).
+    # So ist kein Host-Bind-Mount nötig (der zeigt in Portainer-Git-Deploys ins
+    # Leere, weil Portainer-Storage != Docker-Host-Root).
     image: onyx-nginx-basilicom:${IMAGE_TAG:-latest}
     build:
       context: ../data/nginx
       dockerfile: Dockerfile
     pull_policy: build
     ports: !override []
-    # Host-Bind raus — Templates kommen jetzt aus dem Image (/nginx-templates)
+    # Templates kommen aus dem Image (/nginx-templates)
     volumes: !override []
     environment:
       - DOMAIN=${ONYX_DOMAIN:-onyx.example.com}
@@ -106,11 +101,11 @@ services:
       - traefik.http.routers.onyx-secure.middlewares=onyx-vpn
       - traefik.http.services.onyx.loadbalancer.server.port=80
 
-  # Eingebauter Onyx-MCP-Server (in der Basis-Compose auskommentiert -> hier aktiv).
-  # Streamable-HTTP-MCP auf Port 8090, Endpoint "/". Auth: Bearer-Token, das via
-  # api_server /me validiert wird. Bei AUTH_TYPE=basic muss der Bearer ein echter
-  # Onyx-Admin-API-Key (on_...) sein -> MCP_BEARER_TOKEN = dieser Key (nach dem
-  # ersten Login unter Admin -> API Keys bzw. POST /admin/api-key erstellen).
+  # Eingebauter Onyx-MCP-Server. Streamable-HTTP-MCP auf Port 8090, Endpoint "/".
+  # Auth macht der MCP-Server selbst: er validiert jeden Bearer gegen api_server
+  # /me. Gültig ist ein echter Onyx-PAT (onyx_pat_...) oder API-Key (on_...), den
+  # ein Admin im Onyx-UI erstellt. Claude sendet ihn als `Authorization: Bearer
+  # <token>`; Rotation erfolgt in Onyx (kein Redeploy). Grobfilter: IP-Allowlist.
   mcp_server:
     image: ${ONYX_BACKEND_IMAGE:-onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}}
     restart: unless-stopped
@@ -149,24 +144,20 @@ services:
       # (160.79.104.0/21), NICHT aus eurem VPN. Daher hier zusätzlich erlauben.
       # Die UI bleibt über onyx-vpn (nur VPN) — Anthropic braucht die UI nicht.
       # Hinweis: 160.79.104.0/21 ist Anthropics geteilter Egress (alle claude.ai-
-      # Kunden) -> die IP-Allowlist allein schützt NICHT; der Bearer-Token unten
-      # ist die eigentliche Auth für den Anthropic-Pfad.
+      # Kunden) -> die IP-Allowlist allein schützt NICHT; die eigentliche Auth ist
+      # der vom MCP-Server gegen /me validierte PAT/API-Key.
       - traefik.http.middlewares.onyx-mcp-allow.ipwhitelist.sourcerange=${VPN_SOURCE_RANGE},${ANTHROPIC_SOURCE_RANGE:-160.79.104.0/21}
-      # --- HTTPS + TLS + (VPN|Anthropic)-Allowlist + Bearer-Token-Gate ---
-      # Der Router matcht NUR, wenn der exakte Bearer-Header gesendet wird ->
-      # erste Schicht auf Traefik-Ebene (ohne/falscher Token -> 404). Zweite
-      # Schicht: der MCP-Server validiert denselben Key gegen /me. Damit beide
-      # greifen, ist MCP_BEARER_TOKEN = der echte Onyx-Admin-API-Key.
+      # --- HTTPS + TLS + (VPN|Anthropic)-Allowlist ---
+      # Routing über Host + IP-Allowlist; die Auth macht der MCP-Server selbst
+      # (Bearer gegen /me). Ungültiger/fehlender Token -> 401 von der App.
       - traefik.http.routers.onyx-mcp-secure.entrypoints=https
-      - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`) && Headers(`Authorization`, `Bearer ${MCP_BEARER_TOKEN}`)
+      - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`)
       - traefik.http.routers.onyx-mcp-secure.tls=true
       - traefik.http.routers.onyx-mcp-secure.tls.certresolver=http
       - traefik.http.routers.onyx-mcp-secure.middlewares=onyx-mcp-allow
       - traefik.http.services.onyx-mcp.loadbalancer.server.port=8090
 
 networks:
-  # Externes Traefik-Netz direkt beim echten Namen referenzieren (kein Alias-
-  # Umweg) — so wie der funktionierende n8n-Stack. Vermeidet Attach-Probleme
-  # beim Multi-File-Deploy auf diesem Host.
+  # Externes Traefik-Netz direkt beim echten Namen referenzieren.
   traefik-proxy:
     external: true
