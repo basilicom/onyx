@@ -53,6 +53,18 @@ services:
       # Begrenzt die Selbst-Registrierung auf diese Domain(s) (Komma-Liste).
       # Greift nur, wenn die Var den Container erreicht -> hier explizit mappen.
       - VALID_EMAIL_DOMAINS=${VALID_EMAIL_DOMAINS:-}
+      # --- Email-Versand (SMTP via STARTTLS auf Port 587) — alle optional ---
+      # Gebraucht für Signup-Verifikation, invite-only-Einladungen, Passwort-Reset.
+      # Aktiv, sobald SMTP_SERVER+SMTP_USER+SMTP_PASS gesetzt sind (oder
+      # SENDGRID_API_KEY als Alternative ohne eigenen SMTP-Server).
+      - REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION:-false}
+      - SMTP_SERVER=${SMTP_SERVER:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - ENABLE_EMAIL_INVITES=${ENABLE_EMAIL_INVITES:-false}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
   background:
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
