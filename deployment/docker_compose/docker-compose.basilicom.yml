@@ -19,18 +19,17 @@
 #   - VPN-only: IP-Whitelist (Middleware ipwhitelist) beschränkt Zugriff
 #
 # SICHERHEIT — wichtig:
-#   Die Hosting-Umgebung ist öffentlich erreichbar. Damit Onyx (Jira/Confluence-
-#   Daten!) NICHT öffentlich offen liegt, läuft hier AUTH_TYPE=disabled NUR in
-#   Kombination mit der IP-Whitelist (VPN_SOURCE_RANGE). Nur der VPN-Gateway
-#   (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im VPN
-#   `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
+#   Die Hosting-Umgebung ist öffentlich erreichbar. Schutz der UI: AUTH_TYPE=basic
+#   (v4 hat 'disabled' ENTFERNT) + IP-Whitelist (VPN_SOURCE_RANGE) davor. Nur der
+#   VPN-Gateway (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im
+#   VPN `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
 #
 # Voraussetzungen (Env in Portainer, siehe env.basilicom.template):
 #   TRAEFIK_NETWORK   externes Traefik-Netz (hier: traefik-proxy)
 #   ONYX_DOMAIN       z.B. onyx.example.com
 #   ONYX_MCP_DOMAIN   z.B. onyx-mcp.example.com
 #   VPN_SOURCE_RANGE  erlaubte Quelle(n) als CIDR, z.B. <VPN-EXIT-IP>/32
-#   AUTH_TYPE=disabled + IMAGE_TAG + Secrets
+#   AUTH_TYPE=basic + IMAGE_TAG + Secrets
 #
 # Host-Voraussetzung (OpenSearch): vm.max_map_count >= 262144
 #   sudo sysctl -w vm.max_map_count=262144   (persistent in /etc/sysctl.conf)
@@ -109,8 +108,9 @@ services:
 
   # Eingebauter Onyx-MCP-Server (in der Basis-Compose auskommentiert -> hier aktiv).
   # Streamable-HTTP-MCP auf Port 8090, Endpoint "/". Auth: Bearer-Token, das via
-  # api_server /me validiert wird. Mit AUTH_TYPE=disabled akzeptiert /me jeden
-  # Bearer -> Claude verbindet sich mit beliebigem Token (Schutz = VPN-Allowlist).
+  # api_server /me validiert wird. Bei AUTH_TYPE=basic muss der Bearer ein echter
+  # Onyx-Admin-API-Key (on_...) sein -> MCP_BEARER_TOKEN = dieser Key (nach dem
+  # ersten Login unter Admin -> API Keys bzw. POST /admin/api-key erstellen).
   mcp_server:
     image: ${ONYX_BACKEND_IMAGE:-onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}}
     restart: unless-stopped
@@ -154,8 +154,9 @@ services:
       - traefik.http.middlewares.onyx-mcp-allow.ipwhitelist.sourcerange=${VPN_SOURCE_RANGE},${ANTHROPIC_SOURCE_RANGE:-160.79.104.0/21}
       # --- HTTPS + TLS + (VPN|Anthropic)-Allowlist + Bearer-Token-Gate ---
       # Der Router matcht NUR, wenn der exakte Bearer-Header gesendet wird ->
-      # echte Token-Protection auf Traefik-Ebene (die App selbst prüft mit
-      # AUTH_TYPE=disabled nicht). Ohne/falscher Token -> 404.
+      # erste Schicht auf Traefik-Ebene (ohne/falscher Token -> 404). Zweite
+      # Schicht: der MCP-Server validiert denselben Key gegen /me. Damit beide
+      # greifen, ist MCP_BEARER_TOKEN = der echte Onyx-Admin-API-Key.
       - traefik.http.routers.onyx-mcp-secure.entrypoints=https
       - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`) && Headers(`Authorization`, `Bearer ${MCP_BEARER_TOKEN}`)
       - traefik.http.routers.onyx-mcp-secure.tls=true
