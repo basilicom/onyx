@@ -61,6 +61,16 @@ services:
     environment:
       - WEB_DOMAIN=${WEB_DOMAIN:-}
 
+  # MinIO (S3-File-Store) steht in der Basis-Compose hinter dem Profil
+  # "s3-filestore" und startet bei einem reinen Repository-Deploy daher NICHT
+  # (Portainer aktiviert keine Compose-Profile / reicht COMPOSE_PROFILES nicht
+  # durch). Folge: api_server/background können http://minio:9000 nicht
+  # erreichen -> EndpointConnectionError beim Startup ("Application startup
+  # failed"). Profil hier leeren -> minio startet immer mit. Image/Env/Volume/
+  # Healthcheck aus der Basis bleiben unverändert.
+  minio:
+    profiles: !override []
+
   nginx:
     # Custom-Image mit eingebackenen Templates (Build direkt aus dem Repo).
     # Damit KEIN Host-Bind-Mount mehr nötig — der bleibt in Portainer-Git-Deploys
