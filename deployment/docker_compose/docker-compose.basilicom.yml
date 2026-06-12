@@ -1,45 +1,16 @@
 # =============================================================================
 # Basilicom-Override für Onyx v4 (Portainer + Traefik)
 # =============================================================================
-# Wird ZUSÄTZLICH zur docker-compose.yml geladen. Die Basis-Compose bleibt
-# unverändert (saubere Upstream-Merges).
+# Wird ZUSÄTZLICH zur docker-compose.yml geladen (Basis bleibt unverändert).
+# Setup, Env-Liste und Sicherheitsmodell: siehe README-BASILICOM.md.
 #
-# CLI:
-#   docker compose -f docker-compose.yml -f docker-compose.basilicom.yml -p onyx up -d
-#
-# Portainer (Repository-Deploy):
-#   Compose path:     deployment/docker_compose/docker-compose.yml
-#   Additional path:  deployment/docker_compose/docker-compose.basilicom.yml
-#
-# Was dieser Override macht:
-#   - nginx-Host-Ports entfernen (Ingress über Traefik)
-#   - nginx + mcp_server ans externe Traefik-Netz hängen
-#   - Traefik-Routen für UI (ONYX_DOMAIN) und MCP (ONYX_MCP_DOMAIN)
-#   - eingebauten MCP-Server aktivieren (onyx.mcp_server_main, Port 8090)
-#
-# SICHERHEIT — wichtig:
-#   Die Hosting-Umgebung ist öffentlich erreichbar.
-#   - UI: Schutz ist der Onyx-Login (AUTH_TYPE=basic). Self-Registrierung per
-#     Workspace-„invite-only" + VALID_EMAIL_DOMAINS einschränken. Der erste
-#     Signup wird Admin — Admin-Konto anlegen, BEVOR die Domain öffentlich ist.
-#   - MCP: kein Netz-Filter davor. Der MCP-Server validiert jeden Bearer selbst
-#     gegen api_server /me (echter Onyx-PAT onyx_pat_… oder API-Key on_…).
-#
-# Voraussetzungen (Env in Portainer, siehe env.basilicom.template):
-#   TRAEFIK_NETWORK   externes Traefik-Netz (hier: traefik-proxy)
-#   ONYX_DOMAIN       z.B. onyx.example.com
-#   ONYX_MCP_DOMAIN   z.B. onyx-mcp.example.com
-#   AUTH_TYPE=basic + IMAGE_TAG + Secrets
-#
-# Host-Voraussetzung (OpenSearch): vm.max_map_count >= 262144
-#   sudo sysctl -w vm.max_map_count=262144   (persistent in /etc/sysctl.conf)
+# CLI:  docker compose -f docker-compose.yml -f docker-compose.basilicom.yml -p onyx up -d
+# Host: OpenSearch braucht vm.max_map_count >= 262144.
 # =============================================================================
 
 services:
-  # Diese Vars liest Onyx nur via env_file .env — die existiert beim
-  # Repository-Deploy aber NICHT (Portainer schreibt UI-Vars nur als
-  # ${VAR}-Substitution, nicht als stack.env). Daher hier explizit mappen,
-  # damit die Portainer-Env-Werte wirklich in den Containern landen.
+  # Portainer (Repository-Deploy) injiziert Env nur als ${VAR}-Substitution,
+  # nicht als stack.env -> hier explizit mappen, sonst erreichen sie den Container nicht.
   api_server:
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
@@ -47,12 +18,9 @@ services:
       - USER_AUTH_SECRET=${USER_AUTH_SECRET:-}
       - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
       # Begrenzt die Selbst-Registrierung auf diese Domain(s) (Komma-Liste).
-      # Greift nur, wenn die Var den Container erreicht -> hier explizit mappen.
       - VALID_EMAIL_DOMAINS=${VALID_EMAIL_DOMAINS:-}
-      # --- Email-Versand (SMTP via STARTTLS auf Port 587) — alle optional ---
-      # Gebraucht für Signup-Verifikation, invite-only-Einladungen, Passwort-Reset.
-      # Aktiv, sobald SMTP_SERVER+SMTP_USER+SMTP_PASS gesetzt sind (oder
-      # SENDGRID_API_KEY als Alternative ohne eigenen SMTP-Server).
+      # Email-Versand (optional): aktiv sobald SMTP_SERVER+SMTP_USER+SMTP_PASS
+      # gesetzt sind (oder SENDGRID_API_KEY). Für Signup-Verifikation/Invites/Reset.
       - REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION:-false}
       - SMTP_SERVER=${SMTP_SERVER:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -71,23 +39,20 @@ services:
     environment:
       - WEB_DOMAIN=${WEB_DOMAIN:-}
 
-  # MinIO (S3-File-Store) steht in der Basis-Compose hinter dem Profil
-  # "s3-filestore"; Portainer aktiviert keine Compose-Profile. Profil hier leeren,
-  # damit minio immer mitstartet — api_server/background brauchen http://minio:9000.
+  # Basis-Compose hat minio hinter Profil "s3-filestore"; Portainer aktiviert keine
+  # Profile -> hier leeren, damit minio startet (api_server/background brauchen es).
   minio:
     profiles: !override []
 
   nginx:
-    # Custom-Image mit eingebackenen Config-Templates (Build aus dem Repo).
-    # So ist kein Host-Bind-Mount nötig (der zeigt in Portainer-Git-Deploys ins
-    # Leere, weil Portainer-Storage != Docker-Host-Root).
+    # Custom-Image mit eingebackenen Config-Templates (kein Host-Bind-Mount nötig;
+    # Grund siehe data/nginx/Dockerfile).
     image: onyx-nginx-basilicom:${IMAGE_TAG:-latest}
     build:
       context: ../data/nginx
       dockerfile: Dockerfile
     pull_policy: build
     ports: !override []
-    # Templates kommen aus dem Image (/nginx-templates)
     volumes: !override []
     environment:
       - DOMAIN=${ONYX_DOMAIN:-onyx.example.com}
@@ -109,11 +74,7 @@ services:
       - traefik.http.routers.onyx-secure.tls.certresolver=http
       - traefik.http.services.onyx.loadbalancer.server.port=80
 
-  # Eingebauter Onyx-MCP-Server. Streamable-HTTP-MCP auf Port 8090, Endpoint "/".
-  # Auth macht der MCP-Server selbst: er validiert jeden Bearer gegen api_server
-  # /me. Gültig ist ein echter Onyx-PAT (onyx_pat_...) oder API-Key (on_...), den
-  # ein Admin im Onyx-UI erstellt. Claude sendet ihn als `Authorization: Bearer
-  # <token>`; Rotation erfolgt in Onyx (kein Redeploy). Grobfilter: IP-Allowlist.
+  # Eingebauter Onyx-MCP-Server: Streamable-HTTP auf Port 8090, Endpoint "/".
   mcp_server:
     image: ${ONYX_BACKEND_IMAGE:-onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}}
     restart: unless-stopped
@@ -148,10 +109,7 @@ services:
       - traefik.http.routers.onyx-mcp.middlewares=onyx-mcp-https-redirect
       - traefik.http.middlewares.onyx-mcp-https-redirect.redirectscheme.scheme=https
       # --- HTTPS + TLS (kein Netz-Filter) ---
-      # Routing nur über Host; die Auth macht der MCP-Server selbst (Bearer gegen
-      # /me). Ungültiger/fehlender Token -> 401 von der App. Der Bearer ist ein
-      # echter Onyx-PAT (onyx_pat_…) oder API-Key (on_…), den ein Admin im UI
-      # erstellt; Rotation in Onyx (kein Redeploy).
+      # Auth macht der MCP-Server selbst: Bearer (Onyx-PAT/API-Key) gegen /me.
       - traefik.http.routers.onyx-mcp-secure.entrypoints=https
       - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`)
       - traefik.http.routers.onyx-mcp-secure.tls=true
@@ -159,6 +117,5 @@ services:
       - traefik.http.services.onyx-mcp.loadbalancer.server.port=8090
 
 networks:
-  # Externes Traefik-Netz direkt beim echten Namen referenzieren.
   traefik-proxy:
     external: true
