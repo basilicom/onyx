@@ -16,27 +16,23 @@
 #   - nginx + mcp_server ans externe Traefik-Netz hängen
 #   - Traefik-Routen für UI (ONYX_DOMAIN) und MCP (ONYX_MCP_DOMAIN)
 #   - eingebauten MCP-Server aktivieren (onyx.mcp_server_main, Port 8090)
-#   - VPN-only: IP-Whitelist (Middleware ipwhitelist) beschränkt Zugriff
 #
 # SICHERHEIT — wichtig:
-#   Die Hosting-Umgebung ist öffentlich erreichbar. Schutz der UI: AUTH_TYPE=basic
-#   (Onyx-Login) + IP-Whitelist (VPN_SOURCE_RANGE) davor. Nur der VPN-Gateway
-#   (Full-Tunnel-Exit) ist erlaubter Absender. Exit-IP ermitteln: im VPN
-#   `curl https://ifconfig.me` — dieser Wert gehört in VPN_SOURCE_RANGE.
+#   Die Hosting-Umgebung ist öffentlich erreichbar.
+#   - UI: Schutz ist der Onyx-Login (AUTH_TYPE=basic). Self-Registrierung per
+#     Workspace-„invite-only" + VALID_EMAIL_DOMAINS einschränken. Der erste
+#     Signup wird Admin — Admin-Konto anlegen, BEVOR die Domain öffentlich ist.
+#   - MCP: kein Netz-Filter davor. Der MCP-Server validiert jeden Bearer selbst
+#     gegen api_server /me (echter Onyx-PAT onyx_pat_… oder API-Key on_…).
 #
 # Voraussetzungen (Env in Portainer, siehe env.basilicom.template):
 #   TRAEFIK_NETWORK   externes Traefik-Netz (hier: traefik-proxy)
 #   ONYX_DOMAIN       z.B. onyx.example.com
 #   ONYX_MCP_DOMAIN   z.B. onyx-mcp.example.com
-#   VPN_SOURCE_RANGE  erlaubte Quelle(n) als CIDR, z.B. <VPN-EXIT-IP>/32
 #   AUTH_TYPE=basic + IMAGE_TAG + Secrets
 #
 # Host-Voraussetzung (OpenSearch): vm.max_map_count >= 262144
 #   sudo sysctl -w vm.max_map_count=262144   (persistent in /etc/sysctl.conf)
-#
-# Traefik-Version: Diese Labels sind für Traefik v2 (pde: traefik:v2.11):
-#   Middleware `ipwhitelist`, Router-Matcher `Headers(...)`. Bei Traefik v3
-#   stattdessen `ipallowlist` und `Header(...)` (Singular) verwenden.
 # =============================================================================
 
 services:
@@ -101,19 +97,16 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-traefik-proxy}
-      # --- VPN-only IPWhitelist (Traefik v2; hier definiert, von UI- + MCP-Router genutzt) ---
-      - traefik.http.middlewares.onyx-vpn.ipwhitelist.sourcerange=${VPN_SOURCE_RANGE:?VPN_SOURCE_RANGE muss gesetzt sein (VPN-Exit-CIDR)}
       # --- HTTP -> HTTPS ---
       - traefik.http.routers.onyx.entrypoints=http
       - traefik.http.routers.onyx.rule=Host(`${ONYX_DOMAIN:-onyx.example.com}`)
       - traefik.http.routers.onyx.middlewares=onyx-https-redirect
       - traefik.http.middlewares.onyx-https-redirect.redirectscheme.scheme=https
-      # --- HTTPS + TLS + VPN-Allowlist ---
+      # --- HTTPS + TLS (Zugriffsschutz: Onyx-Login, kein Netz-Filter) ---
       - traefik.http.routers.onyx-secure.entrypoints=https
       - traefik.http.routers.onyx-secure.rule=Host(`${ONYX_DOMAIN:-onyx.example.com}`)
       - traefik.http.routers.onyx-secure.tls=true
       - traefik.http.routers.onyx-secure.tls.certresolver=http
-      - traefik.http.routers.onyx-secure.middlewares=onyx-vpn
       - traefik.http.services.onyx.loadbalancer.server.port=80
 
   # Eingebauter Onyx-MCP-Server. Streamable-HTTP-MCP auf Port 8090, Endpoint "/".
@@ -154,22 +147,15 @@ services:
       - traefik.http.routers.onyx-mcp.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`)
       - traefik.http.routers.onyx-mcp.middlewares=onyx-mcp-https-redirect
       - traefik.http.middlewares.onyx-mcp-https-redirect.redirectscheme.scheme=https
-      # --- Eigene Allowlist für MCP: VPN + Anthropic-Egress ---
-      # claude.ai verbindet sich als Remote-MCP-Client von Anthropics Egress-IPs
-      # (160.79.104.0/21), NICHT aus eurem VPN. Daher hier zusätzlich erlauben.
-      # Die UI bleibt über onyx-vpn (nur VPN) — Anthropic braucht die UI nicht.
-      # Hinweis: 160.79.104.0/21 ist Anthropics geteilter Egress (alle claude.ai-
-      # Kunden) -> die IP-Allowlist allein schützt NICHT; die eigentliche Auth ist
-      # der vom MCP-Server gegen /me validierte PAT/API-Key.
-      - traefik.http.middlewares.onyx-mcp-allow.ipwhitelist.sourcerange=${VPN_SOURCE_RANGE},${ANTHROPIC_SOURCE_RANGE:-160.79.104.0/21}
-      # --- HTTPS + TLS + (VPN|Anthropic)-Allowlist ---
-      # Routing über Host + IP-Allowlist; die Auth macht der MCP-Server selbst
-      # (Bearer gegen /me). Ungültiger/fehlender Token -> 401 von der App.
+      # --- HTTPS + TLS (kein Netz-Filter) ---
+      # Routing nur über Host; die Auth macht der MCP-Server selbst (Bearer gegen
+      # /me). Ungültiger/fehlender Token -> 401 von der App. Der Bearer ist ein
+      # echter Onyx-PAT (onyx_pat_…) oder API-Key (on_…), den ein Admin im UI
+      # erstellt; Rotation in Onyx (kein Redeploy).
       - traefik.http.routers.onyx-mcp-secure.entrypoints=https
       - traefik.http.routers.onyx-mcp-secure.rule=Host(`${ONYX_MCP_DOMAIN:-onyx-mcp.example.com}`)
       - traefik.http.routers.onyx-mcp-secure.tls=true
       - traefik.http.routers.onyx-mcp-secure.tls.certresolver=http
-      - traefik.http.routers.onyx-mcp-secure.middlewares=onyx-mcp-allow
       - traefik.http.services.onyx-mcp.loadbalancer.server.port=8090
 
 networks:

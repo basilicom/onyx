@@ -27,8 +27,6 @@ Basilicom-spezifischen Deploy-Dateien — die Upstream-Compose bleibt unverände
    ONYX_DOMAIN=onyx.example.com
    ONYX_MCP_DOMAIN=onyx-mcp.example.com
    WEB_DOMAIN=https://onyx.example.com
-   VPN_SOURCE_RANGE=<VPN-EXIT-IP>/32
-   ANTHROPIC_SOURCE_RANGE=160.79.104.0/21
    AUTH_TYPE=basic
    POSTGRES_PASSWORD=<secret>
    USER_AUTH_SECRET=<secret>
@@ -88,24 +86,22 @@ oder nginx hängt nicht im Traefik-Netz, oder der Cert-Resolver-Name stimmt nich
 ## Sicherheitsmodell
 
 Die Hosting-Umgebung ist **öffentlich** erreichbar. Onyx hält Jira/Confluence-Daten.
-Schutz auf zwei Ebenen — Netzwerk (Traefik) **und** App (Onyx-Auth):
+Es gibt **keinen Netz-Filter** (kein VPN / keine IP-Allowlist) davor — der Schutz
+ist rein anwendungsseitig (Onyx-Auth):
 
-1. **IP-Allowlist** (Middleware `ipwhitelist`, Traefik v2):
-   - **UI-Router** (`onyx-vpn`): nur `VPN_SOURCE_RANGE` (VPN-Gateway). Mensch-only.
-   - **MCP-Router** (`onyx-mcp-allow`): `VPN_SOURCE_RANGE` **+** `ANTHROPIC_SOURCE_RANGE`
-     (`160.79.104.0/21`), weil claude.ai sich als Remote-MCP-Client von Anthropics
-     Egress aus verbindet.
-2. **App-Auth** (Onyx selbst):
-   - **UI**: `AUTH_TYPE=basic` — echtes Login, erster Signup = Admin. Registrierung
-     per Workspace-„invite-only" + `VALID_EMAIL_DOMAINS` einschränken.
-   - **MCP**: der MCP-Server validiert jeden Bearer gegen `/me`. Gültig nur mit
-     echtem Onyx-PAT (`onyx_pat_...`) oder API-Key (`on_...`). **Das** ist die
-     eigentliche Auth für den Anthropic-Pfad (dessen Egress alle claude.ai-Kunden
-     teilen, die IP-Allowlist allein reicht dort nicht).
+- **UI**: `AUTH_TYPE=basic` — echtes Login. Der erste Signup wird Admin, deshalb
+  das **Admin-Konto anlegen, BEVOR die Domain öffentlich erreichbar ist** (sonst
+  greift sich der erste Fremde die Admin-Rolle). Self-Registrierung per
+  Workspace-„invite-only" (E-Mail-Allowlist im UI) + `VALID_EMAIL_DOMAINS`
+  dichtmachen. Ohne SMTP geht invite-only manuell (Admin trägt die E-Mails ein);
+  `REQUIRE_EMAIL_VERIFICATION` muss dann **false** bleiben.
+- **MCP**: der MCP-Server validiert jeden Bearer gegen `/me`. Gültig nur mit
+  echtem Onyx-PAT (`onyx_pat_...`) oder API-Key (`on_...`), den ein Admin im UI
+  erstellt. Der Token ist die einzige Hürde vor dem MCP — stark, widerrufbar,
+  rotierbar in Onyx (kein Redeploy).
 
 **Verifizieren nach Deploy:**
-- im VPN (`curl https://ifconfig.me` == eure VPN-Exit-IP): die Onyx-URL lädt (Login) ✓
-- ohne VPN: die Onyx-URL → **403** ✓
+- die Onyx-URL lädt die Login-Seite (kein Zugriff ohne Anmeldung) ✓
 - MCP mit gültigem PAT → MCP-Antwort; ohne/ungültiger Token → **401** von der App ✓
 
 ## Claude per MCP anbinden
